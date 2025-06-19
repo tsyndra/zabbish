@@ -1,0 +1,74 @@
+{
+    "routers": [
+        {
+            "name": "40LET",
+            "ip": "87.239.29.247",
+            "description": "MAIN"
+        },
+        {
+            "name": "BUTOVO",
+            "ip": "82.149.223.218",
+            "description": "MAIN"
+        },
+        {
+            "name": "VATUTINKI",
+            "ip": "88.210.49.169",
+            "description": "MAIN"
+        },
+        {
+            "name": "VOSTOK",
+            "ip": "62.217.190.201",
+            "description": "MAIN"
+        },
+        {
+            "name": "ISPANIYA",
+            "ip": "46.242.38.131",
+            "description": "MAIN"
+        },
+        {
+            "name": "KOMMUNARKA",
+            "ip": "94.102.123.173",
+            "description": "MAIN"
+        },
+        {
+            "name": "LUGA",
+            "ip": "185.136.76.134",
+            "description": "MAIN"
+        },
+        {
+            "name": "LUCHI",
+            "ip": "83.237.37.58",
+            "description": "MAIN"
+        },
+        {
+            "name": "MOSKOVSKIY",
+            "ip": "5.228.14.150",
+            "description": "MAIN"
+        },
+        {
+            "name": "PODOLSK",
+            "ip": "77.51.218.182",
+            "description": "MAIN"
+        },
+        {
+            "name": "SKANDINAVIYA",
+            "ip": "178.140.203.115",
+            "description": "MAIN"
+        },
+        {
+            "name": "SCHERBINKA",
+            "ip": "87.239.29.249",
+            "description": "MAIN"
+        },
+        {
+            "name": "ETALON",
+            "ip": "87.239.29.42",
+            "description": "MAIN"
+        },
+        {
+            "name": "YASENEVO",
+            "ip": "95.143.218.198",
+            "description": "MAIN"
+        }
+    ]
+} 

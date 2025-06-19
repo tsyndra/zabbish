@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  router-monitor-bot:
+    build: .
+    container_name: router-monitor-bot
+    restart: always
+    volumes:
+      - ./.env:/app/.env
+      - ./routers.json:/app/routers.json
+    environment:
+      - TZ=Europe/Moscow 
