@@ -9,4 +9,5 @@ services:
       - ./.env:/app/.env
       - ./routers.json:/app/routers.json
     environment:
-      - TZ=Europe/Moscow 
+      - TZ=Europe/Moscow
+      - MIN_OFFLINE_THRESHOLD=30 

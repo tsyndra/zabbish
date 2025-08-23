@@ -141,4 +141,19 @@ logs/
 nomenclature_cache.json
 nomenclature_cache_date.txt
 *.xlsx
-*.xls 
+*.xls
+
+# SSH Keys and sensitive data
+router_ssh_key*
+*.pem
+*.key
+*.pub
+.env
+.env.*
+
+# Test and temporary files
+test_*.py
+*_test.py
+check_*.py
+start_*.sh
+setup_*.exp 

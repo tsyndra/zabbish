@@ -1,4 +1,5 @@
 python-telegram-bot[job-queue]==20.8
 python-dotenv==1.0.1
 schedule==1.2.1
-ping3==4.0.4 
+ping3==4.0.4
+pexpect==4.8.0 
