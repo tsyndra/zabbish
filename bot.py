@@ -104,7 +104,8 @@ def check_lte_modem_ssh(router):
         
         ssh_config = router['ssh_access']
         username = ssh_config.get('username', 'admin')
-        key_path = ssh_config.get('key_path', '~/.ssh/router_key')
+        # Используем key_path из конфигурации или путь по умолчанию для Docker
+        key_path = ssh_config.get('key_path', '/app/router_ssh_key')
         
         # Упрощенная команда для быстрой проверки LTE интерфейса
         cmd = f"ssh -i {key_path} -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {username}@{router['ip']} 'interface print where name=lte1'"
@@ -131,7 +132,6 @@ def check_lte_modem_ssh(router):
                 break
         
         if lte_found and lte_running:
-            # Упрощенная проверка - только проверяем, что интерфейс активен
             return {
                 'available': True,
                 'status': 'Connected',
@@ -148,7 +148,7 @@ def check_lte_modem_ssh(router):
         return {'available': False, 'error': str(e)}
 
 def check_lte_modem_ping(router):
-    """Проверка LTE-модема через ping для Keenetic роутеров"""
+    """Проверка LTE-модема через SSH для Keenetic роутеров"""
     try:
         # Проверяем наличие lte_gateway в конфигурации
         if 'lte_gateway' not in router:
@@ -156,123 +156,118 @@ def check_lte_modem_ping(router):
         
         lte_gateway = router['lte_gateway']
         
-        # Пингуем LTE gateway (обычно это сам модем или его интерфейс)
-        ping_result = ping(lte_gateway, timeout=3)
-        
-        if ping_result is not None:
-            return {
-                'available': True,
-                'status': 'Connected',
-                'ping_time': round(ping_result * 1000, 2),
-                'gateway': lte_gateway
-            }
-        else:
-            # Дополнительная проверка - пингуем через роутер
-            try:
-                # Пытаемся пропинговать через SSH роутера если доступен
-                if 'ssh_access' in router:
-                    ssh_config = router['ssh_access']
-                    username = ssh_config.get('username', 'admin')
-                    password = ssh_config.get('password')
-                    key_path = ssh_config.get('key_path')
+        # Сразу используем SSH для проверки интерфейса Keenetic роутера
+        if 'ssh_access' in router:
+            ssh_config = router['ssh_access']
+            username = ssh_config.get('username', 'admin')
+            password = ssh_config.get('password')
+            key_path = ssh_config.get('key_path')
+            
+            # Используем SSH с паролем для Keenetic роутеров (40LET и VATUTINKI)
+            if password and not key_path:
+                try:
+                    # Используем sshpass для автоматического ввода пароля
+                    import subprocess
+                    sshpass_cmd = f"sshpass -p '{password}' ssh -p 22 -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {username}@{router['ip']} 'show interface CdcEthernet0'"
                     
-                    # Используем SSH с паролем только для роутера 40LET (Keenetic)
-                    if password and not key_path and router.get('name') == '40LET':
-                        try:
-                            # Используем sshpass для автоматического ввода пароля
-                            import subprocess
-                            sshpass_cmd = f"sshpass -p '{password}' ssh -p 22 -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {username}@{router['ip']} 'show interface CdcEthernet0'"
-                            
-                            result = subprocess.run(sshpass_cmd, shell=True, capture_output=True, text=True, timeout=10)
-                            
-                            if result.returncode == 0:
-                                interface_output = result.stdout
-                                
-                                # Проверяем что интерфейс активен
-                                if 'link: up' in interface_output and 'connected: yes' in interface_output:
-                                    # Получаем дополнительную информацию
-                                    signal_level = None
-                                    if 'signal-level:' in interface_output:
-                                        for line in interface_output.split('\n'):
-                                            if 'signal-level:' in line:
-                                                signal_level = line.split(':')[1].strip()
-                                                break
-                                    
-                                    return {
-                                        'available': True,
-                                        'status': 'Connected',
-                                        'gateway': lte_gateway
-                                    }
-                                else:
-                                    return {
-                                        'available': False,
-                                        'status': 'LTE interface down',
-                                        'gateway': lte_gateway
-                                    }
-                            else:
-                                return {
-                                    'available': False,
-                                    'status': f'SSH command failed: {result.stderr}',
-                                    'gateway': lte_gateway
-                                }
-                                
-                        except Exception as e:
-                            logger.debug(f"sshpass failed: {e}")
-                            
-                            # Fallback: пробуем expect если sshpass не работает
-                            try:
-                                import pexpect
-                                ssh_cmd = f"ssh -p 22 -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {username}@{router['ip']}"
-                                child = pexpect.spawn(ssh_cmd, timeout=8)
-                                child.expect(['password:', 'Password:'], timeout=5)
-                                child.sendline(password)
-                                child.expect(['#', '$', '>', '%', 'config'], timeout=5)
-                                
-                                # Проверяем статус LTE интерфейса
-                                child.sendline('show interface CdcEthernet0')
-                                child.expect(['#', '$', '>', '%', 'config'], timeout=8)
-                                interface_output = child.before.decode('utf-8')
-                                
-                                # Проверяем что интерфейс активен
-                                if 'link: up' in interface_output and 'connected: yes' in interface_output:
-                                    child.close()
-                                    return {
-                                        'available': True,
-                                        'status': 'Connected via expect',
-                                        'gateway': lte_gateway
-                                    }
-                                else:
-                                    child.close()
-                                    return {
-                                        'available': False,
-                                        'status': 'LTE interface down',
-                                        'gateway': lte_gateway
-                                    }
-                                    
-                            except Exception as expect_error:
-                                logger.debug(f"expect also failed: {expect_error}")
-                                return {
-                                    'available': False,
-                                    'status': f'SSH error: {str(e)}',
-                                    'gateway': lte_gateway
-                                }
+                    result = subprocess.run(sshpass_cmd, shell=True, capture_output=True, text=True, timeout=10)
                     
-                    # Пробуем SSH с ключом
-                    elif key_path:
-                        cmd = f"ssh -i {key_path} -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {username}@{router['ip']} 'ping {lte_gateway} -c 1 -W 2'"
+                    if result.returncode == 0:
+                        interface_output = result.stdout
                         
-                        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
-                        
-                        if result.returncode == 0 and 'ttl=' in result.stdout.lower():
+                        # Проверяем что интерфейс активен
+                        if 'link: up' in interface_output and 'connected: yes' in interface_output:
+                            # Получаем дополнительную информацию
+                            signal_level = None
+                            operator = None
+                            mobile_type = None
+                            
+                            for line in interface_output.split('\n'):
+                                if 'signal-level:' in line:
+                                    signal_level = line.split(':')[1].strip()
+                                elif 'operator:' in line:
+                                    operator = line.split(':')[1].strip()
+                                elif 'mobile:' in line:
+                                    mobile_type = line.split(':')[1].strip()
+                            
                             return {
                                 'available': True,
-                                'status': 'Connected via router',
+                                'status': 'Connected',
+                                'gateway': lte_gateway,
+                                'signal_level': signal_level,
+                                'operator': operator,
+                                'mobile_type': mobile_type
+                            }
+                        else:
+                            return {
+                                'available': False,
+                                'status': 'LTE interface down',
                                 'gateway': lte_gateway
                             }
+                    else:
+                        return {
+                            'available': False,
+                            'status': f'SSH command failed: {result.stderr}',
+                            'gateway': lte_gateway
+                        }
+                        
+                except Exception as e:
+                    logger.debug(f"sshpass failed: {e}")
+                    
+                    # Fallback: пробуем expect если sshpass не работает
+                    try:
+                        import pexpect
+                        ssh_cmd = f"ssh -p 22 -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {username}@{router['ip']}"
+                        child = pexpect.spawn(ssh_cmd, timeout=8)
+                        child.expect(['password:', 'Password:'], timeout=5)
+                        child.sendline(password)
+                        child.expect(['#', '$', '>', '%', 'config'], timeout=5)
+                        
+                        # Проверяем статус LTE интерфейса
+                        child.sendline('show interface CdcEthernet0')
+                        child.expect(['#', '$', '>', '%', 'config'], timeout=8)
+                        interface_output = child.before.decode('utf-8')
+                        
+                        # Проверяем что интерфейс активен
+                        if 'link: up' in interface_output and 'connected: yes' in interface_output:
+                            child.close()
+                            return {
+                                'available': True,
+                                'status': 'Connected via expect',
+                                'gateway': lte_gateway
+                            }
+                        else:
+                            child.close()
+                            return {
+                                'available': False,
+                                'status': 'LTE interface down',
+                                'gateway': lte_gateway
+                            }
+                            
+                    except Exception as expect_error:
+                        logger.debug(f"expect also failed: {expect_error}")
+                        return {
+                            'available': False,
+                            'status': f'SSH error: {str(e)}',
+                            'gateway': lte_gateway
+                        }
+            
+            # Пробуем SSH с ключом
+            elif key_path:
+                # Используем key_path из конфигурации или путь по умолчанию для Docker
+                ssh_key_path = ssh_config.get('key_path', '/app/router_ssh_key')
+                cmd = f"ssh -i {ssh_key_path} -o ConnectTimeout=3 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes {username}@{router['ip']} 'ping {lte_gateway} -c 1 -W 2'"
                 
-                return {'available': False, 'status': 'LTE gateway unreachable'}
-            except:
-                return {'available': False, 'status': 'LTE gateway unreachable'}
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
+                
+                if result.returncode == 0 and 'ttl=' in result.stdout.lower():
+                    return {
+                        'available': True,
+                        'status': 'Connected via router',
+                        'gateway': lte_gateway
+                    }
+        
+        return {'available': False, 'status': 'LTE gateway unreachable'}
             
     except Exception as e:
         return {'available': False, 'error': str(e)}
@@ -286,12 +281,24 @@ def check_router_status_enhanced(router):
     lte_status = None
     
     # Определяем метод проверки LTE модема:
-    # 1. Если есть lte_gateway - используем ping (для Keenetic)
-    # 2. Если есть только ssh_access - используем SSH команды (для MikroTik)
-    if 'lte_gateway' in router:
-        lte_status = check_lte_modem_ping(router)
-    elif 'ssh_access' in router:
-        lte_status = check_lte_modem_ssh(router)
+    # Для MikroTik роутеров (с username tsyndra) используем SSH команды
+    # Для Keenetic роутеров (с username admin) используем ping
+    if 'ssh_access' in router:
+        ssh_config = router['ssh_access']
+        username = ssh_config.get('username', 'admin')
+        
+        # Если username tsyndra - это MikroTik, используем SSH
+        if username == 'tsyndra':
+            lte_status = check_lte_modem_ssh(router)
+        # Если username admin - это Keenetic, используем ping
+        elif username == 'admin' and 'lte_gateway' in router:
+            lte_status = check_lte_modem_ping(router)
+        else:
+            # Fallback для других случаев
+            if 'lte_gateway' in router:
+                lte_status = check_lte_modem_ping(router)
+            else:
+                lte_status = check_lte_modem_ssh(router)
     
     return {
         'router': basic_status,
@@ -569,7 +576,7 @@ async def check_lte_modems_daily(context: ContextTypes.DEFAULT_TYPE):
         
         # Проверяем, была ли уже проверка сегодня (с учетом таймзоны)
         try:
-            tz = ZoneInfo(os.getenv('TZ', 'Europe/Moscow'))
+            tz = ZoneInfo('Europe/Moscow')  # Принудительно используем московское время
         except Exception:
             tz = None
         now_dt = datetime.now(tz) if tz else datetime.now()
@@ -594,21 +601,27 @@ async def check_lte_modems_daily(context: ContextTypes.DEFAULT_TYPE):
             
             try:
                 # Проверяем LTE-модем используя подходящий метод
-                if 'lte_gateway' in router:
+                if 'lte_gateway' in router and 'ssh_access' in router:
+                    # Если есть и lte_gateway и ssh_access, определяем тип роутера по наличию пароля
+                    ssh_config = router['ssh_access']
+                    if ssh_config.get('password') and not ssh_config.get('key_path'):
+                        # Keenetic роутер с паролем
+                        lte_status = check_lte_modem_ping(router)
+                    else:
+                        # MikroTik роутер с ключом
+                        lte_status = check_lte_modem_ssh(router)
+                elif 'lte_gateway' in router:
+                    # Только lte_gateway - используем ping
                     lte_status = check_lte_modem_ping(router)
-                else:
+                elif 'ssh_access' in router:
+                    # Только ssh_access - используем SSH
                     lte_status = check_lte_modem_ssh(router)
+                else:
+                    lte_status = {'available': False, 'error': 'No LTE support configured'}
                 
                 if lte_status['available']:
                     total_available += 1
-                    message += f"✅📱 {router['name']} ({router['ip']}): доступен"
-                    if lte_status.get('signal_strength'):
-                        message += f" - сигнал: {lte_status['signal_strength']}"
-                    elif lte_status.get('ping_time'):
-                        message += f" - ping: {lte_status['ping_time']}ms"
-                    if lte_status.get('gateway'):
-                        message += f" (gateway: {lte_status['gateway']})"
-                    message += "\n"
+                    message += f"✅📱 {router['name']} ({router['ip']}): доступен\n"
                 else:
                     total_unavailable += 1
                     error_msg = lte_status.get('error', lte_status.get('status', 'неизвестная ошибка'))
@@ -622,25 +635,55 @@ async def check_lte_modems_daily(context: ContextTypes.DEFAULT_TYPE):
         # Добавляем итоговую статистику
         message += f"\n📊 Итого: {total_available}/{total_checked} доступно"
         
-        # Отправляем сообщение
-        try:
-            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=message)
-            logger.info("Отправлено сообщение о ежедневной проверке LTE-модемов")
-            
-            # Отмечаем, что проверка была выполнена сегодня
-            lte_daily_check[today] = True
-            
-            # Очищаем старые записи (старше 7 дней)
-            week_ago = today - timedelta(days=7)
-            old_dates = [date for date in lte_daily_check.keys() if date < week_ago]
-            for old_date in old_dates:
-                del lte_daily_check[old_date]
-            
-            # Следующая проверка автоматически запланирована планировщиком на завтра в 11:00
-            logger.info("Следующая проверка LTE-модемов автоматически запланирована планировщиком")
-            
-        except Exception as e:
-            logger.error(f"Ошибка при отправке сообщения о проверке LTE-модемов: {str(e)}")
+        # Отправляем сообщение с retry логикой
+        max_retries = 3
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID, 
+                    text=message,
+                    read_timeout=60,  # Увеличиваем таймаут чтения
+                    write_timeout=60,  # Увеличиваем таймаут записи
+                    connect_timeout=30  # Увеличиваем таймаут подключения
+                )
+                logger.info("Отправлено сообщение о ежедневной проверке LTE-модемов")
+                
+                # Отмечаем, что проверка была выполнена сегодня
+                lte_daily_check[today] = True
+                
+                # Очищаем старые записи (старше 7 дней)
+                week_ago = today - timedelta(days=7)
+                old_dates = [date for date in lte_daily_check.keys() if date < week_ago]
+                for old_date in old_dates:
+                    del lte_daily_check[old_date]
+                
+                # Следующая проверка автоматически запланирована планировщиком на завтра в 11:00
+                logger.info("Следующая проверка LTE-модемов автоматически запланирована планировщиком")
+                break  # Успешно отправили, выходим из цикла
+                
+            except Exception as e:
+                logger.error(f"Ошибка при отправке сообщения о проверке LTE-модемов (попытка {attempt + 1}/{max_retries}): {str(e)}")
+                
+                if attempt < max_retries - 1:  # Если это не последняя попытка
+                    logger.info(f"Повторная попытка через {retry_delay} секунд...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Увеличиваем задержку для следующей попытки
+                else:
+                    # Последняя попытка не удалась, пытаемся отправить уведомление об ошибке
+                    try:
+                        await asyncio.sleep(5)
+                        error_msg = f"⚠️ Ошибка отправки отчета о проверке LTE-модемов: {str(e)}"
+                        await context.bot.send_message(
+                            chat_id=ADMIN_CHAT_ID, 
+                            text=error_msg,
+                            read_timeout=30,
+                            write_timeout=30,
+                            connect_timeout=15
+                        )
+                    except Exception as retry_error:
+                        logger.error(f"Не удалось отправить уведомление об ошибке: {retry_error}")
             
     except Exception as e:
         logger.error(f"Критическая ошибка в ежедневной проверке LTE-модемов: {str(e)}")
@@ -663,8 +706,8 @@ async def test_scheduler(context: ContextTypes.DEFAULT_TYPE):
 async def reschedule_lte_check(context: ContextTypes.DEFAULT_TYPE):
     """Перепланирование ежедневной проверки LTE-модемов"""
     try:
-        # Определяем таймзону
-        tz_name = os.getenv('TZ', 'Europe/Moscow')
+        # Определяем таймзону - принудительно используем московское время
+        tz_name = 'Europe/Moscow'
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
@@ -691,8 +734,12 @@ async def reschedule_lte_check(context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Перепланирование: ежедневная проверка LTE-модемов установлена на 11:00 ежедневно")
         
         # Отправляем уведомление об успешном перепланировании
-        message = f"🔄 Планировщик перезапущен\n📅 Проверка LTE-модемов: каждый день в 11:00"
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=message)
+        try:
+            message = f"🔄 Планировщик перезапущен\n📅 Проверка LTE-модемов: каждый день в 11:00"
+            await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=message)
+            logger.info("Отправлено уведомление об успешном перепланировании")
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление о перепланировании: {e}")
         
     except Exception as e:
         logger.error(f"Ошибка при перепланировании: {e}")
@@ -715,7 +762,7 @@ async def check_scheduler_health(context: ContextTypes.DEFAULT_TYPE):
         
         # Проверяем, когда была последняя проверка
         try:
-            tz = ZoneInfo(os.getenv('TZ', 'Europe/Moscow'))
+            tz = ZoneInfo('Europe/Moscow')  # Принудительно используем московское время
         except Exception:
             tz = ZoneInfo('UTC')
         
@@ -752,8 +799,8 @@ async def check_scheduler_health(context: ContextTypes.DEFAULT_TYPE):
 async def show_scheduler_status(context: ContextTypes.DEFAULT_TYPE):
     """Показывает статус планировщика"""
     try:
-        # Определяем таймзону
-        tz_name = os.getenv('TZ', 'Europe/Moscow')
+        # Определяем таймзону - принудительно используем московское время
+        tz_name = 'Europe/Moscow'
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
@@ -833,9 +880,10 @@ def main():
         application.add_handler(CommandHandler("test", lambda update, context: asyncio.create_task(test_scheduler(context))))
         application.add_handler(CommandHandler("scheduler", lambda update, context: asyncio.create_task(show_scheduler_status(context))))
         application.add_handler(CommandHandler("lte_check", lambda update, context: asyncio.create_task(check_lte_modems_daily(context))))
+        application.add_handler(CommandHandler("force_lte", lambda update, context: asyncio.create_task(check_lte_modems_daily(context))))
 
-        # Определяем таймзону (по умолчанию Europe/Moscow)
-        tz_name = os.getenv('TZ', 'Europe/Moscow')
+        # Определяем таймзону - принудительно используем московское время
+        tz_name = 'Europe/Moscow'
         try:
             tz = ZoneInfo(tz_name)
             logger.info(f"Используется таймзона: {tz_name}")
@@ -893,7 +941,11 @@ def main():
         logger.info("Бот запускается...")
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True
+            drop_pending_updates=True,
+            pool_timeout=60,  # Увеличиваем таймауты
+            connect_timeout=60,
+            read_timeout=60,
+            write_timeout=60
         )
     except Exception as e:
         logger.error(f"Критическая ошибка при запуске бота: {str(e)}")
